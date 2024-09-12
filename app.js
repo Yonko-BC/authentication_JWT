@@ -8,7 +8,6 @@ const PORT = 3000;
 const SECRET_KEY = "yonko";
 const REFRESH_SECRET_KEY = "yonko_refresh";
 
-// Correct CORS configuration
 app.use(
   cors({
     origin: "http://localhost:8080",
@@ -17,8 +16,6 @@ app.use(
     credentials: true,
   })
 );
-
-app.options("*", cors());
 
 app.use(bodyParser.json());
 app.use(express.json());
@@ -43,7 +40,30 @@ const users = [
   },
 ];
 
-// Middleware to authenticate JWT
+let refreshTokens = [];
+
+app.post("/token", (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(400).json({ message: "Refresh Token Required" });
+  }
+
+  if (!refreshTokens.includes(refreshToken)) {
+    return res.status(401).json({ message: "Invalid Refresh Token" });
+  }
+
+  jwt.verify(refreshToken, REFRESH_SECRET_KEY, (err, user) => {
+    if (err) return res.status(401).json({ message: "Invalid Refresh Token" });
+
+    const accessToken = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, {
+      expiresIn: 20,
+    });
+
+    res.json({ accessToken });
+  });
+});
+
 function authenticateJWT(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -51,54 +71,26 @@ function authenticateJWT(req, res, next) {
     const token = authHeader.split(" ")[1];
 
     jwt.verify(token, SECRET_KEY, (err, user) => {
-      if (err) return res.status(403).json({ message: "Invalid token" });
+      if (err) return res.status(401).json({ message: "Invalid token" });
       req.user = user;
       next();
     });
   } else {
-    console.log("Unauthorized");
     res.status(401).json({ message: "Unauthorized" });
   }
 }
 
-// Add refresh token storage (replace with a database in production)
-let refreshTokens = [];
-
-// Add refresh token endpoint
-app.post("/token", (req, res) => {
-  console.log("api/token");
-  const { refreshToken } = req.body;
-
-  if (!refreshToken) {
-    return res.status(401).json({ message: "Refresh Token Required" });
-  }
-
-  if (!refreshTokens.includes(refreshToken)) {
-    return res.status(403).json({ message: "Invalid Refresh Token" });
-  }
-
-  jwt.verify(refreshToken, REFRESH_SECRET_KEY, (err, user) => {
-    if (err) return res.status(403).json({ message: "Invalid Refresh Token" });
-
-    const accessToken = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, {
-      expiresIn: 60,
-    });
-
-    res.json({ accessToken });
-  });
-});
-
-// Add logout endpoint
 app.post("/logout", (req, res) => {
-  console.log("api/logout");
   const { refreshToken } = req.body;
   refreshTokens = refreshTokens.filter((token) => token !== refreshToken);
   res.status(204).end();
 });
 
 app.get("/user/me", authenticateJWT, (req, res) => {
-  console.log("api/user/me");
   const user = users.find((u) => u.id === req.user.id);
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
   res.json({
     id: req.user.id,
     name: user.name,
@@ -108,21 +100,19 @@ app.get("/user/me", authenticateJWT, (req, res) => {
 });
 
 app.post("/login", (req, res) => {
-  console.log("api/login");
   const { email, password } = req.body;
   const user = users.find((u) => u.email === email && u.password === password);
 
   if (user) {
     const accessToken = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, {
-      expiresIn: 60,
+      expiresIn: 20,
     });
 
     const refreshToken = jwt.sign(
       { id: user.id, role: user.role },
       REFRESH_SECRET_KEY,
       {
-        // 10min
-        expiresIn: 60 * 10,
+        expiresIn: 60,
       }
     );
 
@@ -143,7 +133,6 @@ app.post("/login", (req, res) => {
   }
 });
 
-// Add a new route for /users
 app.get("/users", authenticateJWT, (req, res) => {
   res.json(
     users.map((user) => ({
